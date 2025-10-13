@@ -1,8 +1,0 @@
-flask
-gunicorn
-pandas
-matplotlib
-seaborn
-fpdf
-xlsxwriter
-openpyxl
