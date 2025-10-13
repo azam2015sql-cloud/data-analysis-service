@@ -1,1 +1,1 @@
-web: gunicorn analysis:app --bind 0.0.0.0:$PORT
+web: gunicorn analysis:app --config gunicorn_conf.py
