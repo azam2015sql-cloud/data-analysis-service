@@ -3,6 +3,6 @@ gunicorn
 pandas
 matplotlib
 seaborn
-fpdf
+fpdf2
 xlsxwriter
 openpyxl
