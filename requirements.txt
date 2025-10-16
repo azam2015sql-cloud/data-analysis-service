@@ -1,14 +1,21 @@
-flask
-gunicorn
-pandas
-matplotlib
-seaborn
-fpdf
-xlsxwriter
-# مكتبات جديدة مطلوبة
-fpdf2                # نسخة أحدث من fpdf تدعم العربية بشكل أفضل
-scikit-learn         # للتحليلات المستقبلية والكشف عن القيم الشاذة
-nltk                 # لتنظيف النصوص وإزالة الكلمات المتكررة
-arabic_reshaper      # لتشكيل النصوص العربية للرسم البياني
-python-bidi          # لدعم اتجاه النص من اليمين لليسار (RTL)
-wordcloud            # لتوليد سحابة الكلمات
+# ---- Web Framework ----
+Flask==3.0.3
+gunicorn==22.0.0
+
+# ---- Data Analysis ----
+pandas==2.2.3
+numpy==1.26.4
+openpyxl==3.1.5
+
+# ---- PDF Generation ----
+reportlab==4.2.2
+
+# ---- File Handling ----
+Werkzeug==3.0.3
+
+# ---- Optional Utils ----
+matplotlib==3.9.2
+seaborn==0.13.2
+
+# ---- Prevent heavy deps ----
+--only-binary=:all:

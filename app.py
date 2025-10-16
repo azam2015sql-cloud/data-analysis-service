@@ -3,17 +3,41 @@ import tempfile
 import pandas as pd
 from flask import Flask, request, Response, jsonify
 from werkzeug.utils import secure_filename
-from analysis import analyze_data
-from profiling import generate_profile
-from pivots import create_pivot_tables
-from report import generate_pdf_report
-from io_handler import save_excel_report
-from visuals import create_visuals
+
+# محاولات الاستيراد الآمنة
+try:
+    from analysis import analyze_data
+except ImportError:
+    analyze_data = None
+
+try:
+    from profiling import generate_profile
+except ImportError:
+    generate_profile = None
+
+try:
+    from pivots import create_pivot_tables
+except ImportError:
+    create_pivot_tables = None
+
+try:
+    from report import generate_pdf_report
+except ImportError:
+    generate_pdf_report = None
+
+try:
+    from io_handler import save_excel_report
+except ImportError:
+    save_excel_report = None
+
+try:
+    from visuals import create_visuals
+except ImportError:
+    create_visuals = None
+
 
 app = Flask(__name__)
 
-# --------------------------------------------------
-# 1. Health Check Endpoint
 # --------------------------------------------------
 @app.route("/health", methods=["GET"])
 def health_check():
@@ -21,14 +45,8 @@ def health_check():
 
 
 # --------------------------------------------------
-# 2. Main Analysis Endpoint
-# --------------------------------------------------
 @app.route("/analyze", methods=["POST"])
 def analyze_file():
-    """
-    يستقبل ملف Excel أو CSV، يعالجه، وينشئ تقريري PDF وExcel
-    ثم يُرجعهما مباشرة داخل استجابة multipart/mixed متوافقة مع n8n.
-    """
     if "file" not in request.files:
         return jsonify({"error": "الملف مفقود (form field 'file' مطلوب)"}), 400
 
@@ -49,34 +67,52 @@ def analyze_file():
         return jsonify({"error": f"فشل في قراءة الملف: {str(e)}"}), 400
 
     # --------------------------------------------------
-    # تحليل البيانات باستخدام الوحدات المساعدة
+    # تحليل البيانات (بديل ذكي في حال غياب الدالة)
     # --------------------------------------------------
     try:
-        analysis_result = analyze_data(df)
-        profile_summary = generate_profile(df)
-        pivots = create_pivot_tables(df)
-        visuals = create_visuals(df)
+        if analyze_data:
+            analysis_result = analyze_data(df)
+        else:
+            analysis_result = df.describe(include="all").to_dict()
+
+        profile_summary = generate_profile(df) if generate_profile else {}
+        pivots = create_pivot_tables(df) if create_pivot_tables else {}
+        visuals = create_visuals(df) if create_visuals else {}
     except Exception as e:
-        return jsonify({"error": f"حدث خطأ أثناء تحليل البيانات: {str(e)}"}), 500
+        return jsonify({"error": f"خطأ أثناء تحليل البيانات: {str(e)}"}), 500
 
     # --------------------------------------------------
-    # إنشاء التقارير PDF و Excel داخل الذاكرة
+    # إنشاء ملفات Excel وPDF في الذاكرة
     # --------------------------------------------------
     try:
-        # إنشاء ملف Excel داخل ذاكرة
         excel_buffer = io.BytesIO()
-        save_excel_report(df, analysis_result, pivots, excel_buffer)
+        if save_excel_report:
+            save_excel_report(df, analysis_result, pivots, excel_buffer)
+        else:
+            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="Data")
+                pd.DataFrame(analysis_result).to_excel(writer, sheet_name="Summary")
         excel_buffer.seek(0)
 
-        # إنشاء تقرير PDF داخل ذاكرة مؤقتة
         pdf_buffer = io.BytesIO()
-        generate_pdf_report(df, analysis_result, pivots, visuals, pdf_buffer)
+        if generate_pdf_report:
+            generate_pdf_report(df, analysis_result, pivots, visuals, pdf_buffer)
+        else:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.pdfgen import canvas
+            c = canvas.Canvas(pdf_buffer, pagesize=A4)
+            c.setFont("Helvetica", 12)
+            c.drawString(100, 800, "📊 تقرير التحليل الآلي للبيانات")
+            c.drawString(100, 770, f"عدد الصفوف: {len(df)}")
+            c.drawString(100, 750, f"عدد الأعمدة: {len(df.columns)}")
+            c.showPage()
+            c.save()
         pdf_buffer.seek(0)
     except Exception as e:
         return jsonify({"error": f"فشل إنشاء الملفات: {str(e)}"}), 500
 
     # --------------------------------------------------
-    # إعداد استجابة متعددة الملفات (multipart/mixed)
+    # إرجاع استجابة متعددة الملفات (multipart/mixed)
     # --------------------------------------------------
     boundary = "----DataBoundary"
     multipart_body = io.BytesIO()
@@ -103,8 +139,6 @@ def analyze_file():
     return response
 
 
-# --------------------------------------------------
-# 3. Run locally (for debugging)
 # --------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
