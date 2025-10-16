@@ -1,10 +1,10 @@
 import io
-import tempfile
+import base64
 import pandas as pd
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
-# محاولات الاستيراد الآمنة
+# محاولات استيراد آمنة
 try:
     from analysis import analyze_data
 except ImportError:
@@ -47,6 +47,10 @@ def health_check():
 # --------------------------------------------------
 @app.route("/analyze", methods=["POST"])
 def analyze_file():
+    """
+    يستقبل ملف (CSV/XLSX)، ينشئ تقريري PDF وExcel
+    ثم يُعيدهما داخل JSON بصيغة Base64 (جاهزة لـ n8n)
+    """
     if "file" not in request.files:
         return jsonify({"error": "الملف مفقود (form field 'file' مطلوب)"}), 400
 
@@ -66,9 +70,7 @@ def analyze_file():
     except Exception as e:
         return jsonify({"error": f"فشل في قراءة الملف: {str(e)}"}), 400
 
-    # --------------------------------------------------
-    # تحليل البيانات (بديل ذكي في حال غياب الدالة)
-    # --------------------------------------------------
+    # تحليل البيانات
     try:
         if analyze_data:
             analysis_result = analyze_data(df)
@@ -81,10 +83,9 @@ def analyze_file():
     except Exception as e:
         return jsonify({"error": f"خطأ أثناء تحليل البيانات: {str(e)}"}), 500
 
-    # --------------------------------------------------
-    # إنشاء ملفات Excel وPDF في الذاكرة
-    # --------------------------------------------------
+    # إنشاء الملفات داخل الذاكرة
     try:
+        # Excel
         excel_buffer = io.BytesIO()
         if save_excel_report:
             save_excel_report(df, analysis_result, pivots, excel_buffer)
@@ -94,6 +95,7 @@ def analyze_file():
                 pd.DataFrame(analysis_result).to_excel(writer, sheet_name="Summary")
         excel_buffer.seek(0)
 
+        # PDF
         pdf_buffer = io.BytesIO()
         if generate_pdf_report:
             generate_pdf_report(df, analysis_result, pivots, visuals, pdf_buffer)
@@ -111,32 +113,26 @@ def analyze_file():
     except Exception as e:
         return jsonify({"error": f"فشل إنشاء الملفات: {str(e)}"}), 500
 
-    # --------------------------------------------------
-    # إرجاع استجابة متعددة الملفات (multipart/mixed)
-    # --------------------------------------------------
-    boundary = "----DataBoundary"
-    multipart_body = io.BytesIO()
+    # تحويل الملفات إلى Base64
+    report_excel_b64 = base64.b64encode(excel_buffer.read()).decode("utf-8")
+    report_pdf_b64 = base64.b64encode(pdf_buffer.read()).decode("utf-8")
 
-    def add_part(file_bytes, filename, mime_type):
-        multipart_body.write(f"--{boundary}\r\n".encode())
-        multipart_body.write(
-            f'Content-Disposition: form-data; name="{filename}"; filename="{filename}"\r\n'.encode()
-        )
-        multipart_body.write(f"Content-Type: {mime_type}\r\n\r\n".encode())
-        multipart_body.write(file_bytes)
-        multipart_body.write(b"\r\n")
+    # إرسال الرد بصيغة JSON
+    return jsonify({
+        "status": "success",
+        "report_excel": report_excel_b64,
+        "report_pdf": report_pdf_b64
+    }), 200
 
-    add_part(excel_buffer.read(), "report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    add_part(pdf_buffer.read(), "report.pdf", "application/pdf")
-    multipart_body.write(f"--{boundary}--\r\n".encode())
-    multipart_body.seek(0)
 
-    response = Response(
-        multipart_body.read(),
-        status=200,
-        mimetype=f"multipart/mixed; boundary={boundary}"
-    )
-    return response
+# --------------------------------------------------
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "service": "Data Analysis API",
+        "status": "running",
+        "endpoints": ["/health", "/analyze"]
+    }), 200
 
 
 # --------------------------------------------------
