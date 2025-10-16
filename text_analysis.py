@@ -1,49 +1,64 @@
+import pandas as pd
 import re
 from collections import Counter
-from nltk.corpus import stopwords
-from camel_tools.sentiment import SentimentAnalyzer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 
-# Initialize sentiment analyzer (can be slow, initialize once)
-sa = SentimentAnalyzer.pretrained()
+# تحميل نموذج التحليل العاطفي العربي من Hugging Face
+MODEL_NAME = "CAMeL-Lab/bert-base-arabic-camelbert-mix-sentiment"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
+sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
 
-def clean_arabic_text(text):
-    """Cleans Arabic text from punctuation, numbers, and tashkeel."""
+# ------------------------
+# 🔠 تحليل النصوص العامة
+# ------------------------
+
+def clean_text(text):
+    """تنظيف النص من الرموز والعلامات."""
     if not isinstance(text, str):
         return ""
-    # Remove tashkeel, non-Arabic letters/numbers, and punctuation
-    text = re.sub(r'[^\u0600-\u06FF\s]', '', text)
-    text = re.sub(r'(\w)\1{2,}', r'\1', text) # Remove elongated characters
-    return text.strip()
+    text = re.sub(r"http\S+", "", text)  # إزالة الروابط
+    text = re.sub(r"[^ء-يa-zA-Z\s]", " ", text)  # الإبقاء على الحروف فقط
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 def get_top_words(series, top_n=20):
-    """Finds the most frequent words in an Arabic text series."""
-    # Ensure NLTK stopwords are downloaded
-    try:
-        arabic_stopwords = set(stopwords.words('arabic'))
-    except:
-        return {"error": "NLTK stopwords for Arabic not found. Please download them."}
+    """استخراج أكثر الكلمات تكرارًا في العمود النصي."""
+    words = []
+    for text in series.dropna().astype(str):
+        text = clean_text(text)
+        words.extend(text.split())
+    counter = Counter(words)
+    return dict(counter.most_common(top_n))
 
-    cleaned_series = series.dropna().apply(clean_arabic_text)
-    words = ' '.join(cleaned_series).split()
-    
-    filtered_words = [word for word in words if word not in arabic_stopwords and len(word) > 2]
-    
-    return dict(Counter(filtered_words).most_common(top_n))
+# ------------------------
+# 😊 تحليل المشاعر
+# ------------------------
 
 def analyze_sentiment(series):
-    """Analyzes sentiment for a series of Arabic texts."""
-    # CAMeL Tools expects a list of strings
-    sentences = series.dropna().tolist()
-    if not sentences:
-        return {}
-        
-    # Predict sentiment (positive, negative, neutral)
-    sentiments = sa.predict(sentences)
-    sentiment_counts = Counter(sentiments)
+    """تحليل المشاعر للنصوص العربية باستخدام نموذج CAMeL-Lab."""
+    texts = series.dropna().astype(str).tolist()
+    if not texts:
+        return {"positive": 0, "negative": 0, "neutral": 0}
     
+    results = sentiment_pipeline(texts, truncation=True)
+    
+    pos, neg, neu = 0, 0, 0
+    for r in results:
+        label = r["label"].lower()
+        if "pos" in label:
+            pos += 1
+        elif "neg" in label:
+            neg += 1
+        else:
+            neu += 1
+
+    total = pos + neg + neu
     return {
-        "positive_count": sentiment_counts.get('positive', 0),
-        "negative_count": sentiment_counts.get('negative', 0),
-        "neutral_count": sentiment_counts.get('neutral', 0),
-        "total_analyzed": len(sentences)
+        "positive": pos,
+        "negative": neg,
+        "neutral": neu,
+        "positive_ratio": round(pos / total, 3) if total else 0,
+        "negative_ratio": round(neg / total, 3) if total else 0,
+        "neutral_ratio": round(neu / total, 3) if total else 0,
     }
