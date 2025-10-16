@@ -1,22 +1,11 @@
-# ---- Web Framework ----
 Flask==3.0.3
 gunicorn==22.0.0
-
-# ---- Data Analysis ----
 pandas==2.2.3
-numpy==1.26.4
 openpyxl==3.1.5
-
-# ---- PDF Generation ----
+xlsxwriter==3.1.2
 reportlab==4.2.2
-
-# ---- File Handling ----
-Werkzeug==3.0.3
-
-# ---- Optional Utils ----
 matplotlib==3.9.2
 seaborn==0.13.2
-
-# ---- Prevent heavy deps ----
---only-binary=:all:
-fpdf2==2.7.8
+wordcloud==1.9.2
+arabic_reshaper==0.1.4
+python-bidi==0.4.2

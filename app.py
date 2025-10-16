@@ -1,66 +1,102 @@
-from flask import Flask, request, jsonify
-from io_handler import read_data
-from report import create_excel_report, create_pdf_report
-import base64
-import traceback
-import tempfile
+# app.py
 import os
+import io
+import base64
+from flask import Flask, request, jsonify
+from werkzeug.utils import secure_filename
+
+# محليات المشروع (آمنة: استدعاء في try-except داخل هذه الوحدة)
+from io_handler import read_data
+
+# دوال التقرير (مستعملة داخل المشروع)
+from report import create_excel_report, create_pdf_report
+
+# محاولات لاستدعاء وحدات غير ضرورية (stubs handled in their modules)
+try:
+    from profiling import profile_dataframe
+except Exception:
+    def profile_dataframe(df): return {}
+
+try:
+    from pivots import generate_smart_pivots
+except Exception:
+    def generate_smart_pivots(df): return {}
+
+try:
+    from visuals import create_visuals
+except Exception:
+    def create_visuals(df): return {}
+
+# النصي: نُوقِف الاعتماد على تحليل المشاعر الثقيل:
+# text_analysis.py موجود كـ stub يعيد نتائج فارغة
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def home():
-    return "<h3>✅ API is running</h3>", 200
+API_KEY = os.environ.get("ANALYSIS_API_KEY", "change_this_to_a_strong_key")
 
 @app.route("/health", methods=["GET"])
-def health():
+def health_check():
     return jsonify({"status": "ok"}), 200
 
 @app.route("/analyze", methods=["POST"])
-def analyze():
+def analyze_file():
+    """
+    Accepts multipart/form-data with file field name 'file'.
+    Returns JSON:
+      {
+        "status":"success",
+        "report_excel": "<base64>",
+        "report_pdf": "<base64>"
+      }
+    """
+    # Security: optional API key header
+    expected_key = os.environ.get("ANALYSIS_API_KEY")
+    header_key = request.headers.get("x-api-key")
+    if expected_key:
+        if header_key != expected_key:
+            return jsonify({"error": "Unauthorized"}), 401
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded. Field 'file' is required."}), 400
+
+    uploaded_file = request.files["file"]
+    if uploaded_file.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
+
+    filename = secure_filename(uploaded_file.filename)
     try:
-        # التحقق من وجود الملف
-        if 'file' not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-        
-        uploaded_file = request.files['file']
+        # read_data will raise on unsupported formats
         df = read_data(uploaded_file)
-        if df is None or df.empty:
-            return jsonify({"error": "Invalid or empty file"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed reading file: {str(e)}"}), 400
 
-        # إنشاء تقارير مؤقتة
-        with tempfile.TemporaryDirectory() as tmpdir:
-            excel_path = os.path.join(tmpdir, "report.xlsx")
-            pdf_path = os.path.join(tmpdir, "report.pdf")
+    try:
+        # lightweight analysis pipeline
+        profile = profile_dataframe(df)
+        pivots = generate_smart_pivots(df)
+        visuals = create_visuals(df)
 
-            # توليد الملفات
-            create_excel_report
-            create_pdf_report
+        # Create Excel and PDF in-memory
+        excel_bytes = create_excel_report(df, profile, pivots)
+        pdf_bytes = create_pdf_report(df, profile, pivots, visuals)
 
+        # encode to base64 for JSON transport to n8n
+        excel_b64 = base64.b64encode(excel_bytes).decode("utf-8")
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-            # تحويل الملفات إلى base64
-            with open(excel_path, "rb") as f:
-                excel_b64 = base64.b64encode(f.read()).decode('utf-8')
-            with open(pdf_path, "rb") as f:
-                pdf_b64 = base64.b64encode(f.read()).decode('utf-8')
-
-        # إرجاع الرد بشكل نظيف وواضح
-        response = jsonify({
-            "success": True,
+        return jsonify({
+            "status": "success",
             "report_excel": excel_b64,
             "report_pdf": pdf_b64
-        })
-        response.status_code = 200
-        response.headers["Connection"] = "close"
-        return response
+        }), 200
 
     except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "trace": traceback.format_exc()
-        }), 500
+        # Return error + traceback for debugging (optional)
+        import traceback as _tb
+        return jsonify({"error": str(e), "trace": _tb.format_exc()}), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=False, threaded=True)
+    # Bind to PORT provided by Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
