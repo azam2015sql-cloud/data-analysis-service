@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from io_handler import read_data
-from report import generate_excel_report, generate_pdf_report
+from report import create_excel_report, create_pdf_report
 import base64
 import traceback
 import tempfile
@@ -34,8 +34,9 @@ def analyze():
             pdf_path = os.path.join(tmpdir, "report.pdf")
 
             # توليد الملفات
-            generate_excel_report(df, excel_path)
-            generate_pdf_report(df, pdf_path)
+            create_excel_report
+            create_pdf_report
+
 
             # تحويل الملفات إلى base64
             with open(excel_path, "rb") as f:
