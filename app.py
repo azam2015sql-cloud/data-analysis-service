@@ -57,12 +57,13 @@ def analyze_endpoint():
 
         # 3. Text Analysis (on the first text column found)
         text_results = {}
-        if text_columns:
-    text_series = df[text_columns[0]]
-    top_words = get_top_words(text_series)
-    text_results = {"top_words": top_words}
-else:
-    text_results = {}
+     if text_columns:
+         text_series = df[text_columns[0]]
+         top_words = get_top_words(text_series)
+         text_results = {"top_words": top_words}
+     else:
+         text_results = {}
+
 
 
         # 4. Visualizations
