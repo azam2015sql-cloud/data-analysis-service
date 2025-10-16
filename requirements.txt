@@ -1,7 +1,15 @@
-Flask==3.1.2
-gunicorn==23.0.0
-pandas==2.3.3
-openpyxl==3.1.5
-xlsxwriter==3.2.9
-fpdf==1.7.2
-numpy==2.3.3
+flask
+gunicorn
+pandas
+matplotlib
+seaborn
+fpdf
+xlsxwriter
+# مكتبات جديدة مطلوبة
+fpdf2                # نسخة أحدث من fpdf تدعم العربية بشكل أفضل
+scikit-learn         # للتحليلات المستقبلية والكشف عن القيم الشاذة
+nltk                 # لتنظيف النصوص وإزالة الكلمات المتكررة
+camel-tools          # لتحليل المشاعر العربية (مكتبة متخصصة)
+arabic_reshaper      # لتشكيل النصوص العربية للرسم البياني
+python-bidi          # لدعم اتجاه النص من اليمين لليسار (RTL)
+wordcloud            # لتوليد سحابة الكلمات
