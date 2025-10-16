@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, abort
 from io_handler import read_data
 from profiling import profile_dataframe
 from analysis import analyze_numeric, analyze_datetime, analyze_categorical
-from text_analysis import get_top_words, analyze_sentiment
+from text_analysis import get_top_words
 from visuals import plot_histogram, plot_correlation_heatmap, generate_wordcloud
 from pivots import generate_smart_pivots
 from report import create_excel_report, create_pdf_report
@@ -58,10 +58,12 @@ def analyze_endpoint():
         # 3. Text Analysis (on the first text column found)
         text_results = {}
         if text_columns:
-            text_series = df[text_columns[0]]
-            top_words = get_top_words(text_series)
-            sentiment = analyze_sentiment(text_series)
-            text_results = {"top_words": top_words, "sentiment": sentiment}
+    text_series = df[text_columns[0]]
+    top_words = get_top_words(text_series)
+    text_results = {"top_words": top_words}
+else:
+    text_results = {}
+
 
         # 4. Visualizations
         visuals = {}
