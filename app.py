@@ -1,118 +1,110 @@
-import os
-import matplotlib
-matplotlib.use("Agg")  # استخدام backend خفيف لتجنب استهلاك الذاكرة في Render
-
-from flask import Flask, request, jsonify, abort
-
-# استيراد الوحدات المساعدة
-from io_handler import read_data
-from profiling import profile_dataframe
-from analysis import analyze_numeric, analyze_datetime, analyze_categorical
-from text_analysis import get_top_words  # بدون تحليل مشاعر
-from visuals import plot_histogram, plot_correlation_heatmap, generate_wordcloud
-from pivots import generate_smart_pivots
-from report import create_excel_report, create_pdf_report
+import io
+import tempfile
+import pandas as pd
+from flask import Flask, request, Response, jsonify
+from werkzeug.utils import secure_filename
+from analysis import analyze_data
+from profiling import generate_profile
+from pivots import create_pivot_tables
+from report import generate_pdf_report
+from io_handler import save_excel_report
+from visuals import create_visuals
 
 app = Flask(__name__)
 
-# 🔐 مفتاح API للأمان
-API_KEY = os.environ.get("ANALYSIS_API_KEY", "change_this_to_a_strong_key")
-
-
-def require_api_key(req):
-    """التحقق من مفتاح API."""
-    key = req.headers.get("x-api-key")
-    if not key or key != API_KEY:
-        abort(401, description="Unauthorized: Missing or invalid API Key.")
-
-
+# --------------------------------------------------
+# 1. Health Check Endpoint
+# --------------------------------------------------
 @app.route("/health", methods=["GET"])
-def health():
-    """فحص صحة الخدمة."""
-    return jsonify({"status": "ok"})
+def health_check():
+    return jsonify({"status": "ok"}), 200
 
 
+# --------------------------------------------------
+# 2. Main Analysis Endpoint
+# --------------------------------------------------
 @app.route("/analyze", methods=["POST"])
-def analyze_endpoint():
-    """نقطة تحليل البيانات الرئيسية."""
-    require_api_key(request)
+def analyze_file():
+    """
+    يستقبل ملف Excel أو CSV، يعالجه، وينشئ تقريري PDF وExcel
+    ثم يُرجعهما مباشرة داخل استجابة multipart/mixed متوافقة مع n8n.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "الملف مفقود (form field 'file' مطلوب)"}), 400
 
-    # التحقق من وجود ملف
-    if 'file' not in request.files:
-        return jsonify({"error": "Missing 'file' field"}), 400
+    uploaded_file = request.files["file"]
+    if uploaded_file.filename == "":
+        return jsonify({"error": "اسم الملف فارغ"}), 400
 
-    file = request.files['file']
+    filename = secure_filename(uploaded_file.filename)
+    ext = filename.split(".")[-1].lower()
+
+    # تحميل الملف إلى DataFrame
     try:
-        df = read_data(file)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-
-    try:
-        # 1️⃣ تحليل مبدئي لتحديد أنواع الأعمدة
-        profile = profile_dataframe(df)
-
-        # 2️⃣ تحليل الأعمدة حسب نوعها
-        analysis_summary = {}
-        text_columns = []
-        for col, col_type in profile.items():
-            if col_type == 'numeric':
-                analysis_summary[col] = analyze_numeric(df[col])
-            elif col_type == 'datetime':
-                analysis_summary[col] = analyze_datetime(df[col])
-            elif col_type == 'categorical':
-                analysis_summary[col] = analyze_categorical(df[col])
-            elif col_type == 'text':
-                text_columns.append(col)
-
-        # 3️⃣ تحليل نصي (الكلمات الأكثر تكرارًا فقط)
-        text_results = {}
-        if text_columns:
-            text_series = df[text_columns[0]]
-            top_words = get_top_words(text_series)
-            text_results = {"top_words": top_words}
+        if ext == "csv":
+            df = pd.read_csv(uploaded_file)
         else:
-            text_results = {}
-
-        # 4️⃣ توليد الرسوم البيانية
-        visuals = {}
-        numeric_cols = [k for k, v in profile.items() if v == 'numeric']
-        if numeric_cols:
-            visuals['histogram_first_numeric'] = plot_histogram(
-                df[numeric_cols[0]], title=numeric_cols[0]
-            )
-            visuals['correlation_heatmap'] = plot_correlation_heatmap(df)
-
-        if text_results.get('top_words'):
-            visuals['wordcloud'] = generate_wordcloud(text_results['top_words'])
-
-        # 5️⃣ توليد الجداول المحورية
-        pivots = generate_smart_pivots(df, profile)
-
-        # 6️⃣ إنشاء التقارير النهائية
-        final_reports = {
-            'excel_report_b64': create_excel_report(
-                df, profile, analysis_summary, pivots, text_results
-            ),
-            'pdf_report_b64': create_pdf_report(analysis_summary, text_results),
-        }
-
-        # 7️⃣ إعادة النتيجة
-        return jsonify({
-            "status": "success",
-            "profile": profile,
-            "analysis_summary": analysis_summary,
-            "visuals_b64": visuals,
-            "reports": final_reports
-        })
-
+            df = pd.read_excel(uploaded_file)
     except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
-        return jsonify({"error": "An internal error occurred during analysis."}), 500
+        return jsonify({"error": f"فشل في قراءة الملف: {str(e)}"}), 400
+
+    # --------------------------------------------------
+    # تحليل البيانات باستخدام الوحدات المساعدة
+    # --------------------------------------------------
+    try:
+        analysis_result = analyze_data(df)
+        profile_summary = generate_profile(df)
+        pivots = create_pivot_tables(df)
+        visuals = create_visuals(df)
+    except Exception as e:
+        return jsonify({"error": f"حدث خطأ أثناء تحليل البيانات: {str(e)}"}), 500
+
+    # --------------------------------------------------
+    # إنشاء التقارير PDF و Excel داخل الذاكرة
+    # --------------------------------------------------
+    try:
+        # إنشاء ملف Excel داخل ذاكرة
+        excel_buffer = io.BytesIO()
+        save_excel_report(df, analysis_result, pivots, excel_buffer)
+        excel_buffer.seek(0)
+
+        # إنشاء تقرير PDF داخل ذاكرة مؤقتة
+        pdf_buffer = io.BytesIO()
+        generate_pdf_report(df, analysis_result, pivots, visuals, pdf_buffer)
+        pdf_buffer.seek(0)
+    except Exception as e:
+        return jsonify({"error": f"فشل إنشاء الملفات: {str(e)}"}), 500
+
+    # --------------------------------------------------
+    # إعداد استجابة متعددة الملفات (multipart/mixed)
+    # --------------------------------------------------
+    boundary = "----DataBoundary"
+    multipart_body = io.BytesIO()
+
+    def add_part(file_bytes, filename, mime_type):
+        multipart_body.write(f"--{boundary}\r\n".encode())
+        multipart_body.write(
+            f'Content-Disposition: form-data; name="{filename}"; filename="{filename}"\r\n'.encode()
+        )
+        multipart_body.write(f"Content-Type: {mime_type}\r\n\r\n".encode())
+        multipart_body.write(file_bytes)
+        multipart_body.write(b"\r\n")
+
+    add_part(excel_buffer.read(), "report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    add_part(pdf_buffer.read(), "report.pdf", "application/pdf")
+    multipart_body.write(f"--{boundary}--\r\n".encode())
+    multipart_body.seek(0)
+
+    response = Response(
+        multipart_body.read(),
+        status=200,
+        mimetype=f"multipart/mixed; boundary={boundary}"
+    )
+    return response
 
 
+# --------------------------------------------------
+# 3. Run locally (for debugging)
+# --------------------------------------------------
 if __name__ == "__main__":
-    # التأكد من وجود مجلد الخطوط
-    if not os.path.exists('fonts'):
-        os.makedirs('fonts')
-        print("⚠️ Created 'fonts' directory. Please add Amiri-Regular.ttf font.")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=5000)
